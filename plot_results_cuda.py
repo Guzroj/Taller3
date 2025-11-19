@@ -1,98 +1,104 @@
 #!/usr/bin/env python3
-import argparse
-import pandas as pd
-import matplotlib.pyplot as plt
+# -*- coding: utf-8 -*-
+import argparse, pandas as pd, matplotlib.pyplot as plt
+from pathlib import Path
 
 def main():
-    parser = argparse.ArgumentParser(description="Gráficas serial vs CUDA")
-    parser.add_argument("--csv", default="results.csv", help="Archivo CSV de entrada")
-    parser.add_argument("--alpha", type=int, default=50, help="Porcentaje de caracteres alfabéticos")
-    parser.add_argument("--misalign", type=int, default=0, help="Desalineamiento usado (0 o 7)")
-    parser.add_argument("--mode", choices=["upper", "lower", "both"], default="upper",
-                        help="Modo a graficar (upper, lower o both)")
-    parser.add_argument("--logx", action="store_true", help="Usar escala log10 en el eje X (bytes)")
-    parser.add_argument("--show", action="store_true", help="Mostrar ventanas en lugar de solo guardar PNG")
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("csv", help="results.csv de bench.sh")
+    ap.add_argument("--alpha", type=int, default=None, help="filtrar % alfabético (0..100)")
+    ap.add_argument("--misalign", type=int, default=None, help="filtrar misalign (p.ej. 0 o 7)")
+    ap.add_argument("--outdir", default="plots", help="carpeta salida")
+    args = ap.parse_args()
 
-    # Leer CSV
+    outdir = Path(args.outdir)
+    outdir.mkdir(exist_ok=True, parents=True)
+
     df = pd.read_csv(args.csv)
 
-    # Filtrar por alpha y misalign
-    f = (df["alpha"] == args.alpha) & (df["misalign"] == args.misalign)
-    df = df[f].copy()
+    # Asegurar tipos numéricos
+    for c in ["bytes", "proc_ms", "io_ms", "VmRSS_KiB", "alpha", "misalign"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Filtros por alpha / misalign
+    if args.alpha is not None:
+        df = df[df["alpha"] == args.alpha]
+    if args.misalign is not None:
+        df = df[df["misalign"] == args.misalign]
+
+    # Dejemos solo mode=upper (si existe)
+    if "mode" in df.columns and "upper" in df["mode"].unique():
+        df = df[df["mode"] == "upper"]
 
     if df.empty:
-        print("No hay datos que coincidan con alpha={} y misalign={} en {}"
-              .format(args.alpha, args.misalign, args.csv))
+        print("No hay datos después de aplicar filtros.")
         return
 
-    # Opcional: filtrar por modo
-    modes = ["upper", "lower"] if args.mode == "both" else [args.mode]
-    df = df[df["mode"].isin(modes)]
-
-    # Para orden lógico en el eje X
-    df = df.sort_values("bytes")
-
-    # Separamos serial y cuda
-    df_serial = df[df["impl"] == "serial"].copy()
-    df_cuda   = df[df["impl"] == "cuda"].copy()
-
-    # Asegurarnos de empatar por (mode, bytes)
-    key_cols = ["mode", "bytes"]
-    df_merged = pd.merge(
-        df_serial[key_cols + ["proc_ms"]].rename(columns={"proc_ms": "proc_serial"}),
-        df_cuda[key_cols + ["proc_ms"]].rename(columns={"proc_ms": "proc_cuda"}),
-        on=key_cols,
-        how="inner"
+    # Agregados por (impl, bytes): mediana para robustez
+    agg = (
+        df.groupby(["impl", "bytes"], as_index=False)
+          .agg(proc_ms=("proc_ms", "median"),
+               io_ms=("io_ms", "median"))
     )
 
-    # Speedup
-    df_merged["speedup"] = df_merged["proc_serial"] / df_merged["proc_cuda"]
+    # Pivot a formato ancho
+    w_proc = agg.pivot(index="bytes", columns="impl", values="proc_ms").sort_index()
+    w_io   = agg.pivot(index="bytes", columns="impl", values="io_ms").sort_index()
+    total  = w_proc.add(w_io, fill_value=0.0)
 
-    # --------- Gráfica 1: tiempo de procesamiento vs tamaño ---------
-    for mode in modes:
-        df_s = df_serial[df_serial["mode"] == mode]
-        df_c = df_cuda[df_cuda["mode"] == mode]
+    # etiqueta para títulos
+    tag = []
+    if args.alpha is not None:
+        tag.append(f"alpha={args.alpha}%")
+    if args.misalign is not None:
+        tag.append(f"misalign=+{args.misalign}")
+    tag = " — " + ", ".join(tag) if tag else ""
 
+    # (i) proc_ms vs bytes (serial vs CUDA)
+    plt.figure()
+    if "serial" in w_proc:
+        plt.plot(w_proc.index, w_proc["serial"], marker="o", label="serial (proc_ms)")
+    if "cuda" in w_proc:
+        plt.plot(w_proc.index, w_proc["cuda"], marker="o", label="cuda (proc_ms)")
+    plt.xscale("log")
+    plt.xlabel("Tamaño (bytes, log)")
+    plt.ylabel("Tiempo de cómputo (ms)")
+    plt.title("Cómputo: serial vs CUDA" + tag)
+    plt.grid(True, which="both", linestyle=":")
+    plt.legend()
+    plt.savefig(outdir / "proc_vs_bytes.png", dpi=160, bbox_inches="tight")
+
+    # (ii) total = proc+io
+    plt.figure()
+    if "serial" in total:
+        plt.plot(total.index, total["serial"], marker="o", label="serial (proc+io)")
+    if "cuda" in total:
+        plt.plot(total.index, total["cuda"], marker="o", label="cuda (proc+io)")
+    plt.xscale("log")
+    plt.xlabel("Tamaño (bytes, log)")
+    plt.ylabel("Tiempo total (ms)")
+    plt.title("Total (proc + io): serial vs CUDA" + tag)
+    plt.grid(True, which="both", linestyle=":")
+    plt.legend()
+    plt.savefig(outdir / "total_vs_bytes.png", dpi=160, bbox_inches="tight")
+
+    # (iii) speedup de cómputo (serial / CUDA)
+    if {"serial", "cuda"}.issubset(w_proc.columns):
+        speed = w_proc["serial"] / w_proc["cuda"]
         plt.figure()
-        plt.plot(df_s["bytes"], df_s["proc_ms"], marker="o", label="serial")
-        plt.plot(df_c["bytes"], df_c["proc_ms"], marker="s", label="cuda")
-        if args.logx:
-            plt.xscale("log")
-        plt.xlabel("Tamaño (bytes)")
-        plt.ylabel("Tiempo de cómputo (ms)")
-        plt.title(f"Tiempo de procesamiento vs tamaño (mode={mode}, alpha={args.alpha}, misalign={args.misalign})")
-        plt.legend()
-        plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-        out_name = f"tiempo_{mode}_alpha{args.alpha}_mis{args.misalign}.png"
-        plt.tight_layout()
-        plt.savefig(out_name, dpi=150)
-        print("Guardado:", out_name)
-        if args.show:
-            plt.show()
-        else:
-            plt.close()
+        plt.plot(speed.index, speed.values, marker="o")
+        plt.xscale("log")
+        plt.xlabel("Tamaño (bytes, log)")
+        plt.ylabel("Speedup × (serial/cuda)")
+        plt.title("Speedup de cómputo" + tag)
+        plt.grid(True, which="both", linestyle=":")
+        plt.axhline(1.0, ls="--")
+        plt.savefig(outdir / "speedup_proc.png", dpi=160, bbox_inches="tight")
 
-    # --------- Gráfica 2: speedup vs tamaño ---------
-    for mode in modes:
-        df_m = df_merged[df_merged["mode"] == mode]
-
-        plt.figure()
-        plt.plot(df_m["bytes"], df_m["speedup"], marker="o")
-        if args.logx:
-            plt.xscale("log")
-        plt.xlabel("Tamaño (bytes)")
-        plt.ylabel("Speedup (serial / cuda)")
-        plt.title(f"Speedup vs tamaño (mode={mode}, alpha={args.alpha}, misalign={args.misalign})")
-        plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-        out_name = f"speedup_{mode}_alpha{args.alpha}_mis{args.misalign}.png"
-        plt.tight_layout()
-        plt.savefig(out_name, dpi=150)
-        print("Guardado:", out_name)
-        if args.show:
-            plt.show()
-        else:
-            plt.close()
+    # guardar agregados (útil para tablas en el reporte)
+    agg.sort_values(["impl", "bytes"]).to_csv(outdir / "agg_median_by_size.csv", index=False)
+    print("Listo. PNGs en", outdir)
 
 if __name__ == "__main__":
     main()

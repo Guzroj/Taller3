@@ -19,11 +19,13 @@ if [[ ! -x ./cuda_conv ]]; then
   exit 1
 fi
 
-# Tamaños de prueba (ajusta o agrega más si el profe pide 50 tamaños)
-SIZES=(\
-  "1K" "2K" "4K" "8K" "16K" "32K" "64K" "128K" "256K" \
-  "512K" "1M" "2M" "4M" "8M" "16M" "32M" "64M" \
-)
+
+SIZES=()
+for n in $(seq 1 50); do
+  size_bytes=$((1024 * 1024 * n))   # n MiB en bytes
+  SIZES+=("$size_bytes")
+done
+
 
 # Porcentajes de caracteres alfabéticos
 ALPHAS=(0 10 20 30 40 50 60 70 80 90)
