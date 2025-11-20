@@ -10,27 +10,29 @@ Este proyecto implementa:
 
 El objetivo es comparar rendimiento, validar correctitud y analizar el impacto de tamaños, alineamientos y porcentajes de caracteres alfabéticos.
 
-# 1. Requisitos
+# Requisitos
 
 ### Software necesario
 - Linux
 - `g++` con soporte C++17
-- CUDA Toolkit instalado (incluye `nvcc`)
+- CUDA Toolkit instalado 
 - Python 3 con:
   - `pandas`
   - `matplotlib`
+    
+# Pasos para ejecutar
 
-### 2.Instalación rápida para lo necesario de python en Linux
+### 1.Instalación rápida para lo necesario de python en Linux
 sudo apt update
 sudo apt install python3-pandas python3-matplotlib
 
-### 3.Para compilar hay que ejecutar el Makefile
+### 2.Para compilar hay que ejecutar el Makefile
 make
 
 ### Para borrar los binarios 
 make clean
 
-### 4.Si se quiere correr los archivos individuales 
+### 3.Si se quiere correr los archivos individuales 
 ./gen_text --size 8M --alpha 50 --align 32 --misalign 7 --out input.bin
 
 *Version serial:
@@ -41,20 +43,20 @@ make clean
 ./cuda_conv --mode upper --in input.bin --out out_cuda.bin
 ./cuda_conv --mode lower --in input.bin --out out_cuda.bin
 
-### 5.Para hacer la validacion de que dan lo mismo hacer 
+### 4.Para hacer la validacion de que dan lo mismo hacer 
 make validate
 
 
-### 6.Correr la prueba de los resultados (Benchmark)
+### 5.Correr la prueba de los resultados (Benchmark)
 make bench
 
-### 7.Generar Graficas
+### 6.Generar Graficas
 python3 plot_results_cuda.py results.csv --alpha 50 --misalign 0
 o 
 python3 plot_results_cuda.py results.csv --alpha 30 --misalign 7
 
 
-### Flujo cumpliendo todo lo del taller 
+## Flujo cumpliendo todo lo del taller 
 make                
 make validate      
 make bench        
